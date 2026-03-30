@@ -4,22 +4,21 @@ from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from langchain_openai import OpenAIEmbeddings
-from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
-
+from langchain_core.documents import Document
+from extraction import get_extraction_instance
+from dotenv import load_dotenv
 import os
 import supabase
-
+load_dotenv()
 SUPABASE_URL = "https://wseiwivmsrpeiuncgrdw.supabase.co"
 SUPABASE_KEY = "sb_secret_xMSHhyHybzjmjrsJLE8mOg_rFlcIM7N"
 BUCKET_NAME = "Qdrant"
 QDRANT_COLLECTION_NAME = "TestCollection"
 QDRANT_CLUSTER_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOlt7ImNvbGxlY3Rpb24iOiJUZXN0Q29sbGVjdGlvbiIsImFjY2VzcyI6InJ3In1dfQ.-1hzy7ArbWWx-TE-17xHBWyO0sHTdLOUp4uvdehwTWo"
 QDRANT_ENDPOINT = "https://1d32280f-e019-4189-9d9b-24c22475aa17.sa-east-1-0.aws.cloud.qdrant.io"
-OPENAI_API_KEY="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"
-
 
 
 class EmbeddingAgent:   
@@ -31,7 +30,6 @@ class EmbeddingAgent:
         self.qdrant_cluster_key = QDRANT_CLUSTER_KEY
         self.embeddings = OpenAIEmbeddings(
             model="text-embedding-3-small",  # or text-embedding-3-large
-            api_key=OPENAI_API_KEY
         )
         self._setup_supabase_client()
         self._setup_qdrant_client()
@@ -39,7 +37,7 @@ class EmbeddingAgent:
 
     # Setup langchain agent 
     def _setup_langchain_agent(self):
-        llm = ChatOpenAI(model="gpt-4o", api_key=OPENAI_API_KEY)
+        llm = ChatOpenAI(model="gpt-4o")
         self.agent = create_agent(
             model=llm,
             system_prompt="You are a helpful assistant",
@@ -63,7 +61,6 @@ class EmbeddingAgent:
                     collection_name=self.qdrant_collection_name,
                     vectors_config=VectorParams(size=1536, distance=Distance.COSINE),
                 )
-
             # Wrap with LangChain VectorStore
             self.vector_store = QdrantVectorStore(
                 client=self.qdrant_client,
@@ -126,12 +123,6 @@ class EmbeddingAgent:
 
 
 
-    # Extract text from file bytes
-    def _text_extraction(self, file_bytes: bytes, file_extension: str = "") -> str:
-        pass
-     
-
-
     def query_qdrant(self, user_query: str, limit: int = 10):
         try:
             results = self.vector_store.similarity_search(
@@ -149,26 +140,40 @@ class EmbeddingAgent:
         upload_result = self._upload_file_get_url(
             bucket_name=self.bucket_name,
             file_bytes=file_bytes,
-            destination_path="TestCollection/" + destination_path,  # Store in 'uploads' folder in the bucket
+            destination_path="TestCollection/" + destination_path,
         )
         file_url = upload_result["file_url"]
 
         # Step 2: Extract file extension from destination_path
-        file_extension = os.path.splitext(destination_path)[1]
+        file_extension = os.path.splitext(destination_path)[1].lower()
 
-        # Step 3: Extract text from the file bytes
-        extracted_text = self._text_extraction(file_bytes, file_extension)
-        # extracted_text = dict[text_from_file, text_from_image]
+        # Step 3: Extract text and images from the file bytes
+        extraction_instance = get_extraction_instance()
+        extraction_result = extraction_instance.extract_text_and_images(file_bytes, file_extension)
 
-        # normally insert the text into the Qdrant
+        text_documents: list[Document] = extraction_result["text_from_file"]
+        image_descriptions: list[dict] = extraction_result["text_from_images"]
 
-        # for the text_from_image 
-            # loop through it 
-            # convert the bytes into a file and upload to supabase 
-            # then call the insert data with url with the file_url 
+        # Step 4: Insert plain text into Qdrant
+        text_chunks: list[str] = [doc.page_content for doc in text_documents]
+        self._insert_data_with_url(text_chunks, file_url)
 
-        # Step 4: Insert data into Qdrant collection with the file URL
-        self._insert_data_with_url(chunks, file_url)
+        # Step 5: Handle image descriptions
+        for index, image in enumerate(image_descriptions):
+            # build a destination path for the image in the bucket
+            image_extension = image.get("ext", "png")
+            image_destination = f"TestCollection/Images/{os.path.splitext(destination_path)[0]}_{index}.{image_extension}"
+
+            # upload image bytes to supabase and get its url
+            image_upload_result = self._upload_file_get_url(
+                bucket_name=self.bucket_name,
+                file_bytes=image["bytes"],
+                destination_path=image_destination,
+            )
+            image_url = image_upload_result["file_url"]
+
+            # insert image description text into Qdrant with image url as reference
+            self._insert_data_with_url([image["text"]], image_url)
 
         return {
             "status": "success",

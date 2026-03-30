@@ -6,23 +6,19 @@ from langchain_community.document_loaders import (
     UnstructuredMarkdownLoader,
 )
 from langchain_core.documents import Document
+from dotenv import load_dotenv
 import tempfile
 import os
 
-
-# Global variables
-OPENAI_API_KEY="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"
-
+load_dotenv()
 
 class Extraction:
     def __init__(
         self,
-        openai_api_key: str,
         vlm_model: str = "gpt-4o-mini",
     ):
         self.vlm = ChatOpenAI(
             model=vlm_model,
-            api_key=openai_api_key,
         )
 
 
@@ -93,6 +89,7 @@ class Extraction:
                     images.append({
                         "bytes": base_image["image"],
                         "page":  page_num + 1,
+                        "ext":   base_image["ext"],  # "png", "jpeg", "webp" etc.
                     })
         finally:
             doc.close()
@@ -118,6 +115,7 @@ class Extraction:
                 images.append({
                     "bytes": z.read(img_path),
                     "page":  None,
+                    "ext":   ext,
                 })
 
         return images
@@ -128,7 +126,7 @@ class Extraction:
         Use the VLM to generate a detailed description of the image.
 
         Args:
-            image: dict with keys: bytes, page.
+            image: dict with keys: bytes, page, ext.
 
         Returns:
             Same dict with an additional "text" field containing the description.
@@ -265,15 +263,11 @@ class Extraction:
     
 
 
-if __name__ == "__main__":
-    # Example usage
-    extractor = Extraction(openai_api_key=OPENAI_API_KEY)
-    with open("resume.docx", "rb") as f:
-        file_bytes = f.read()
-        results = extractor.extract_text_and_images(file_bytes, ".docx")
-        print("Text from file:", results["text_from_file"])
-        print("-----------------------------------------------------------------#-------------------------------------------------------------")
-        print("Text from images:", results["text_from_images"])
-
-    
+# singleton class 
+ExtractionInstance : Extraction | None = None
+def get_extraction_instance():
+    global ExtractionInstance
+    if ExtractionInstance is None:
+        ExtractionInstance = Extraction()
+    return ExtractionInstance
 

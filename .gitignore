@@ -6,3 +6,6 @@
 venv/
 ENV/
 env/
+
+# Python bytecode
+__pycache__/
