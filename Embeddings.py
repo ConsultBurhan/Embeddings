@@ -127,38 +127,9 @@ class EmbeddingAgent:
 
 
     # Extract text from file bytes
-    def _extract_text_from_file(self, file_bytes: bytes, file_extension: str = "") -> str:
-        """Extract text from file bytes based on file extension."""
-        from io import BytesIO
-        
-        # Normalize the extension
-        file_extension = file_extension.lower()
-        if not file_extension.startswith('.'):
-            file_extension = '.' + file_extension
-        
-        if file_extension == ".pdf":
-            from pypdf import PdfReader
-            pdf_file = BytesIO(file_bytes)
-            pdf_reader = PdfReader(pdf_file)
-            text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text()
-            return text
-        
-        elif file_extension == ".docx":
-            from docx import Document
-            docx_file = BytesIO(file_bytes)
-            doc = Document(docx_file)
-            text = ""
-            for paragraph in doc.paragraphs:
-                text += paragraph.text + "\n"
-            return text
-        
-        elif file_extension == ".txt":
-            return file_bytes.decode('utf-8')
-        
-        else:
-            raise ValueError(f"Unsupported file type: {file_extension}")
+    def _text_extraction(self, file_bytes: bytes, file_extension: str = "") -> str:
+        pass
+     
 
 
     def query_qdrant(self, user_query: str, limit: int = 10):
@@ -186,8 +157,15 @@ class EmbeddingAgent:
         file_extension = os.path.splitext(destination_path)[1]
 
         # Step 3: Extract text from the file bytes
-        extracted_text = self._extract_text_from_file(file_bytes, file_extension)
-        chunks = [extracted_text[i:i+500] for i in range(0, len(extracted_text), 500)]
+        extracted_text = self._text_extraction(file_bytes, file_extension)
+        # extracted_text = dict[text_from_file, text_from_image]
+
+        # normally insert the text into the Qdrant
+
+        # for the text_from_image 
+            # loop through it 
+            # convert the bytes into a file and upload to supabase 
+            # then call the insert data with url with the file_url 
 
         # Step 4: Insert data into Qdrant collection with the file URL
         self._insert_data_with_url(chunks, file_url)
