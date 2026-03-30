@@ -20,6 +20,7 @@ QDRANT_COLLECTION_NAME = "TestCollection"
 QDRANT_CLUSTER_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOlt7ImNvbGxlY3Rpb24iOiJUZXN0Q29sbGVjdGlvbiIsImFjY2VzcyI6InJ3In1dfQ.-1hzy7ArbWWx-TE-17xHBWyO0sHTdLOUp4uvdehwTWo"
 QDRANT_ENDPOINT = "https://1d32280f-e019-4189-9d9b-24c22475aa17.sa-east-1-0.aws.cloud.qdrant.io"
 
+# Make sure to set the OPENAI_API_KEY in your environment variables or .env file
 
 class EmbeddingAgent:   
     def __init__(self):
