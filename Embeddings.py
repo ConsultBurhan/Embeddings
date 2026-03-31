@@ -8,10 +8,15 @@ from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
 from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from extraction import get_extraction_instance
 from dotenv import load_dotenv
+
 import os
 import supabase
+
+
+
 load_dotenv()
 SUPABASE_URL = "https://wseiwivmsrpeiuncgrdw.supabase.co"
 SUPABASE_KEY = "sb_secret_xMSHhyHybzjmjrsJLE8mOg_rFlcIM7N"
@@ -103,24 +108,38 @@ class EmbeddingAgent:
 
 
     # Insert data into the Qdrant colection along wth the file URL
+
+    # Insert data into the Qdrant collection along with the file URL
     def _insert_data_with_url(self, data: list, file_url: str):
         try:
-            metadatas = [{"file_url": file_url} for _ in data]
-            
-            # Batch insert in groups of 100
-            batch_size = 100
-            for i in range(0, len(data), batch_size):
-                batch_texts = data[i:i + batch_size]
-                batch_metadatas = metadatas[i:i + batch_size]
-                
-                self.vector_store.add_texts(
-                    texts=batch_texts,
-                    metadatas=batch_metadatas,
-                )
-                print(f"Upserted batch {i // batch_size + 1}, points {i} to {i + len(batch_texts)}")
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=800,
+                chunk_overlap=100,
+                separators=[
+                    "\n\n",          # paragraph
+                    "\n",            # line
+                    "\r\n",          # windows newline
+                    "\t",            # tabs
+                    ".",             # sentences
+                    "!", "?",        # sentence endings
+                    ";", ":",        # clauses
+                    ",",             # phrases
+                    " ",             # words
+                    ""               # fallback (character-level)
+                ]
+            )
+
+            docs = splitter.create_documents(data)
+
+            for doc in docs:
+                doc.metadata["file_url"] = file_url
+
+            self.vector_store.add_documents(docs)
+
+            print(f"Inserted {len(docs)} chunks into Qdrant")
+
         except Exception as e:
             raise RuntimeError(f"Failed to insert data into Qdrant: {e}") from e
-
 
 
     def query_qdrant(self, user_query: str, limit: int = 10):
@@ -155,25 +174,27 @@ class EmbeddingAgent:
         image_descriptions: list[dict] = extraction_result["text_from_images"]
 
         # Step 4: Insert plain text into Qdrant
-        text_chunks: list[str] = [doc.page_content for doc in text_documents]
-        self._insert_data_with_url(text_chunks, file_url)
+        if text_documents is not None and len(text_documents) > 0:
+            text_chunks: list[str] = [doc.page_content for doc in text_documents]
+            self._insert_data_with_url(text_chunks, file_url)
 
         # Step 5: Handle image descriptions
-        for index, image in enumerate(image_descriptions):
-            # build a destination path for the image in the bucket
-            image_extension = image.get("ext", "png")
-            image_destination = f"TestCollection/Images/{os.path.splitext(destination_path)[0]}_{index}.{image_extension}"
+        if image_descriptions is not None and len(image_descriptions) > 0:
+            for index, image in enumerate(image_descriptions):
+                # build a destination path for the image in the bucket
+                image_extension = image.get("ext", "png")
+                image_destination = f"TestCollection/Images/{os.path.splitext(destination_path)[0]}_{index}.{image_extension}"
 
-            # upload image bytes to supabase and get its url
-            image_upload_result = self._upload_file_get_url(
-                bucket_name=self.bucket_name,
-                file_bytes=image["bytes"],
-                destination_path=image_destination,
-            )
-            image_url = image_upload_result["file_url"]
+                # upload image bytes to supabase and get its url
+                image_upload_result = self._upload_file_get_url(
+                    bucket_name=self.bucket_name,
+                    file_bytes=image["bytes"],
+                    destination_path=image_destination,
+                )
+                image_url = image_upload_result["file_url"]
 
-            # insert image description text into Qdrant with image url as reference
-            self._insert_data_with_url([image["text"]], image_url)
+                # insert image description text into Qdrant with image url as reference
+                self._insert_data_with_url([image["text"]], image_url)
 
         return {
             "status": "success",

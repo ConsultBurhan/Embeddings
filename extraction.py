@@ -4,7 +4,9 @@ from langchain_community.document_loaders import (
     Docx2txtLoader,
     TextLoader,
     UnstructuredMarkdownLoader,
+    parsers
 )
+from ocr import OCRExtractor
 from langchain_core.documents import Document
 from dotenv import load_dotenv
 import tempfile
@@ -40,7 +42,18 @@ class Extraction:
 
 
     def _load_pdf(self, file_bytes: bytes, file_extension: str) -> list[Document]:
-        return self._load_with_temp_file(file_bytes, file_extension, PyMuPDFLoader)
+        docs = self._load_with_temp_file(
+            file_bytes, 
+            file_extension, 
+            PyMuPDFLoader,
+            mode='page',
+            images_parser=parsers.TesseractBlobParser(langs=["ara", "eng"]),
+
+        )
+        if self._validate_ocr_needed(docs):
+            return OCRExtractor.extract_text_OCR(file_bytes)
+        
+        return docs
 
     def _load_docx(self, file_bytes: bytes, file_extension: str) -> list[Document]:
         return self._load_with_temp_file(file_bytes, file_extension, Docx2txtLoader)
@@ -51,24 +64,28 @@ class Extraction:
     def _load_md(self, file_bytes: bytes, file_extension: str) -> list[Document]:
         return self._load_with_temp_file(file_bytes, file_extension, UnstructuredMarkdownLoader)
 
-   
-    # Helper method to determine if OCR is needed based on the amount of text extracted
-    def _validate_ocr_need(self, documents: list[Document], min_non_whitespace_chars: int = 200) -> bool:
+    
+    def _load_full_ocr(self, file_bytes: bytes) -> list[Document]:
+        pass
+
+
+    # Helper method to determine if the file need a full OCR or not 
+    def _validate_ocr_needed(self, documents: list[Document], min_chars: int = 200) -> bool:
         """
-        Check if the loaded documents have enough text or if OCR is needed.
-        Combines all page content and checks against the minimum threshold.
+        Check if the PDF needs a full OCR pass.
+        Returns True if the total extracted text is too small to be meaningful.
 
         Args:
-            documents: List of Document objects returned from any loader.
-            min_non_whitespace_chars: Minimum non-whitespace characters expected.
+            documents: List of Document objects returned from PyMuPDFLoader.
+            min_chars: Minimum number of non-whitespace characters expected across all pages.
 
         Returns:
-            True if OCR is recommended, False otherwise.
+            True if OCR is needed, False otherwise.
         """
-        combined = " ".join(doc.page_content for doc in documents).strip()
-        return (not combined) or (len(combined) < min_non_whitespace_chars)
-    
-    
+        total_text = "".join(doc.page_content for doc in documents).strip()
+        return len(total_text) < min_chars
+
+
 
     # Heloper methods to extract images from PDFs
     def _extract_images_pdf(self, file_bytes: bytes) -> list[dict]:
@@ -136,17 +153,16 @@ class Extraction:
 
         b64 = base64.b64encode(image["bytes"]).decode("utf-8")
 
-        prompt = """You are analyzing an image extracted from a document.
-    Your task is to produce a thorough, factual description that will be used for semantic search and retrieval.
+        prompt = """Analyze this image and follow these rules in order:
 
-    Follow these rules:
-    - If the image contains text, extract it exactly as written, preserving the original language (including Arabic or any other language).
-    - If the image is a chart or graph, describe the type, axes, trends, and key data points.
-    - If the image is a table, extract all rows and columns with their values.
-    - If the image is a diagram or flowchart, describe the components and the relationships between them.
-    - If the image is a photograph or illustration, describe the key visual elements, objects, and context.
-    - Be specific and factual. Do not make assumptions or infer information not visible in the image.
-    - Do not include phrases like "the image shows" or "I can see". Just describe directly.
+1. If the image is primarily text (notes, screenshot, paragraph, chat, invoice, document):
+   - Extract ALL the text exactly as written, preserving the original language and formatting.
+   - Do not summarize, do not describe. Just extract the raw text faithfully.
+
+2. If the image is visual content (chart, diagram, photo, illustration):
+   - Describe it in detail including type, key elements, any text labels, and what it communicates.
+
+Do not mix these two modes. Pick one based on what the image primarily contains. If in doubt, default to the first mode and extract text.
     """
 
         message = HumanMessage(
@@ -213,6 +229,19 @@ class Extraction:
        
     # Method to extract the text from the image
     def extract_text_from_file(self, file_bytes: bytes, file_extension: str) -> list[Document]:
+        """
+        Extract text from a file based on its extension.
+
+        Args:
+            file_bytes (bytes): File content in bytes.
+            file_extension (str): File type (e.g., ".pdf", ".docx").
+
+        Returns:
+            list[Document]: Extracted documents.
+
+        Raises:
+            ValueError: If the file type is not supported.
+        """
         mapping = {
             ".pdf":  self._load_pdf,
             ".docx": self._load_docx,
