@@ -64,9 +64,6 @@ class Extraction:
     def _load_md(self, file_bytes: bytes, file_extension: str) -> list[Document]:
         return self._load_with_temp_file(file_bytes, file_extension, UnstructuredMarkdownLoader)
 
-    
-    def _load_full_ocr(self, file_bytes: bytes) -> list[Document]:
-        pass
 
 
     # Helper method to determine if the file need a full OCR or not 
